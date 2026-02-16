@@ -1,59 +1,12 @@
-from fastapi import FastAPI, Depends
-from sqlalchemy import create_engine, Column, Integer, String, Float, Date
-from sqlalchemy.orm import sessionmaker, declarative_base, Session
-from fastapi.middleware.cors import CORSMiddleware
-import os
+from fastapi import FastAPI, Depends, HTTPException
+from sqlalchemy.orm import Session
+from database import SessionLocal, engine
+import models, schemas
 
-# =========================
-# DATABASE CONFIG
-# =========================
-
-DB_USER = "root"
-DB_PASSWORD = "root"
-DB_HOST = "localhost"
-DB_PORT = "3306"
-DB_NAME = "vamsi"
-
-DATABASE_URL = f"mysql+pymysql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
-
-engine = create_engine(DATABASE_URL)
-SessionLocal = sessionmaker(bind=engine)
-Base = declarative_base()
-
-# =========================
-# TABLE MODEL
-# =========================
-
-class Customer(Base):
-    __tablename__ = "customer"
-
-    transaction_id = Column(Integer, primary_key=True, index=True)
-    date = Column(Date)
-    product_category = Column(String(100))
-    product_name = Column(String(200))
-    units_sold = Column(Integer)
-    unit_price = Column(Float)
-    total_revenue = Column(Float)
-    region = Column(String(100))
-    payment_method = Column(String(50))
-
-# =========================
-# FASTAPI APP
-# =========================
+models.Base.metadata.create_all(bind=engine)
 
 app = FastAPI()
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-# =========================
-# DB Dependency
-# =========================
 
 def get_db():
     db = SessionLocal()
@@ -62,56 +15,39 @@ def get_db():
     finally:
         db.close()
 
-# =========================
-# API ENDPOINTS
-# =========================
 
-# Get all customers (limit 100)
-@app.get("/")
-def home():
-    return {"message":"api is running successfully"}
-
-@app.get("/customers/{region_name}")
-def get_customers(region_name: str, db: Session = Depends(get_db)):
-    customers = db.query(Customer).filter(Customer.region == region_name).all()
-    result = []
-    for c in customers:
-        result.append({
-            "transaction_id": c.transaction_id,
-            "date": str(c.date),
-            "product_category": c.product_category,
-            "product_name": c.product_name,
-            "units_sold": c.units_sold,
-            "unit_price": c.unit_price,
-            "total_revenue": c.total_revenue,
-            "region": c.region,
-            "payment_method": c.payment_method
-        })
-    return result
+@app.post("/register")
+def register_user(user: schemas.UserCreate, db: Session = Depends(get_db)):
+    db_user = models.User(**user.dict())
+    db.add(db_user)
+    db.commit()
+    db.refresh(db_user)
+    return db_user
 
 
-# Get by region
-@app.get("/customers/region/{region_name}")
-def get_by_region(region_name: str, db: Session = Depends(get_db)):
-    data = db.query(Customer).filter(Customer.region == region_name).all()
-    return data
+@app.post("/book")
+def book_appointment(appointment: schemas.AppointmentCreate, db: Session = Depends(get_db)):
+    db_appointment = models.Appointment(**appointment.dict())
+    db.add(db_appointment)
+    db.commit()
+    db.refresh(db_appointment)
+    return db_appointment
 
 
-# Get by product name
-@app.get("/customers/product/{product_name}")
-def get_by_product(product_name: str, db: Session = Depends(get_db)):
-    data = db.query(Customer).filter(Customer.product_name == product_name).all()
-    return data
+@app.get("/status/{appointment_id}")
+def check_status(appointment_id: int, db: Session = Depends(get_db)):
+    appointment = db.query(models.Appointment).filter(models.Appointment.id == appointment_id).first()
+    if not appointment:
+        raise HTTPException(status_code=404, detail="Appointment not found")
+    return appointment
 
 
-# Get total revenue by region
-@app.get("/revenue/{region_name}")
-def total_revenue(region_name: str, db: Session = Depends(get_db)):
-    data = db.query(Customer).filter(Customer.region == region_name).all()
+@app.put("/cancel/{appointment_id}")
+def cancel_appointment(appointment_id: int, db: Session = Depends(get_db)):
+    appointment = db.query(models.Appointment).filter(models.Appointment.id == appointment_id).first()
+    if not appointment:
+        raise HTTPException(status_code=404, detail="Appointment not found")
 
-    total = sum([row.total_revenue for row in data])
-
-    return {
-        "region": region_name,
-        "total_revenue": total
-    }
+    appointment.status = "CANCELLED"
+    db.commit()
+    return {"message": "Appointment cancelled successfully"}
